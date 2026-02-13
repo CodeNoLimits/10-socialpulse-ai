@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { useAppStore } from "@/lib/store";
 
 interface AuthContextType {
@@ -27,27 +27,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setStoreUser = useAppStore((state) => state.setUser);
 
   useEffect(() => {
+    // If Supabase is not configured, skip auth check and go to demo mode
+    if (!isSupabaseConfigured) {
+      setLoading(false);
+      return;
+    }
+
     // Check initial session
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        setStoreUser({
-          id: session.user.id,
-          email: session.user.email || "",
-          fullName: session.user.user_metadata?.full_name || "",
-          avatarUrl: session.user.user_metadata?.avatar_url,
-          subscriptionTier: "free",
-        });
-      }
-      setLoading(false);
-    };
-
-    checkSession();
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
         setUser(session?.user ?? null);
         if (session?.user) {
           setStoreUser({
@@ -57,41 +46,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             avatarUrl: session.user.user_metadata?.avatar_url,
             subscriptionTier: "free",
           });
-        } else {
-          setStoreUser(null);
         }
+      } catch (err) {
+        console.warn("Supabase auth check failed, running in demo mode:", err);
+      } finally {
         setLoading(false);
       }
-    );
+    };
+
+    checkSession();
+
+    // Listen for auth changes
+    let subscription: { unsubscribe: () => void } | null = null;
+    try {
+      const { data } = supabase.auth.onAuthStateChange(
+        async (event, session) => {
+          setUser(session?.user ?? null);
+          if (session?.user) {
+            setStoreUser({
+              id: session.user.id,
+              email: session.user.email || "",
+              fullName: session.user.user_metadata?.full_name || "",
+              avatarUrl: session.user.user_metadata?.avatar_url,
+              subscriptionTier: "free",
+            });
+          } else {
+            setStoreUser(null);
+          }
+          setLoading(false);
+        }
+      );
+      subscription = data.subscription;
+    } catch (err) {
+      console.warn("Supabase auth listener failed:", err);
+    }
 
     return () => {
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [setStoreUser]);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { error: error as Error | null };
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      return { error: error as Error | null };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (e) {
+      return { error: new Error("Authentication service unavailable. Try demo mode.") };
+    }
   };
 
   const signUp = async (email: string, password: string, fullName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
         },
-      },
-    });
-    return { error: error as Error | null };
+      });
+      return { error: error as Error | null };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (e) {
+      return { error: new Error("Authentication service unavailable. Try demo mode.") };
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn("Sign out failed:", err);
+    }
     setStoreUser(null);
   };
 
