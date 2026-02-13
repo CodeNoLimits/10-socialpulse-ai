@@ -33,10 +33,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    let isMounted = true;
+
+    // Timeout to prevent hanging on unreachable Supabase
+    const timeout = setTimeout(() => {
+      if (isMounted && loading) {
+        console.warn("Supabase auth check timed out, running in demo mode");
+        setLoading(false);
+      }
+    }, 3000);
+
     // Check initial session
     const checkSession = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
+        if (!isMounted) return;
         setUser(session?.user ?? null);
         if (session?.user) {
           setStoreUser({
@@ -50,7 +61,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.warn("Supabase auth check failed, running in demo mode:", err);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          clearTimeout(timeout);
+          setLoading(false);
+        }
       }
     };
 
@@ -61,6 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data } = supabase.auth.onAuthStateChange(
         async (event, session) => {
+          if (!isMounted) return;
           setUser(session?.user ?? null);
           if (session?.user) {
             setStoreUser({
@@ -82,8 +97,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     return () => {
+      isMounted = false;
+      clearTimeout(timeout);
       subscription?.unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setStoreUser]);
 
   const signIn = async (email: string, password: string) => {
